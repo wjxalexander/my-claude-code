@@ -25,45 +25,58 @@ from dotenv import load_dotenv
 from anthropic import Anthropic
 
 load_dotenv(override=True)
-api_key=os.environ.get("ANTHROPIC_API_KEY")
-client=Anthropic(api_key=api_key)
+api_key = os.environ.get("ANTHROPIC_API_KEY")
+client = Anthropic(api_key=api_key)
 MODEL = os.environ["MODEL_ID"]
 
-SYSTEM_PROMPT= f"You are a coding agent at {os.getcwd()}. Use bash to solve tasks. Act, don't explain."
+SYSTEM_PROMPT = f"You are a coding agent at {os.getcwd()}. Use bash to solve tasks. Act, don't explain."
 # https://platform.claude.com/docs/en/agents-and-tools/tool-use/overview
-TOOLS = [{
-    "name": "bash",
-    "description": "Run a shell command.",
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "command": {
-                "type": "string",
-                "description": "The command to run",
+TOOLS = [
+    {
+        "name": "bash",
+        "description": "Run a shell command.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "command": {
+                    "type": "string",
+                    "description": "The command to run",
+                },
             },
+            "required": ["command"],
         },
-        "required": ["command"],
-    },
-}]
+    }
+]
+
 
 def run_bash(command: str) -> str:
     dangerous = ["rm -rf /", "sudo", "shutdown", "reboot", "> /dev/"]
     if any(d in command for d in dangerous):
         return "Error: Dangerous command blocked"
     try:
-        r = subprocess.run(command, shell=True, cwd=os.getcwd(),
-                           capture_output=True, text=True, timeout=120)
+        r = subprocess.run(
+            command,
+            shell=True,
+            cwd=os.getcwd(),
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
         out = (r.stdout + r.stderr).strip()
         return out[:50000] if out else "(no output)"
     except subprocess.TimeoutExpired:
         return "Error: Timeout (120s)"
 
+
 # -- The core pattern: a while loop that calls tools until the model stops --
 def agent_loop(messages: list):
     while True:
         response = client.messages.create(
-            model=MODEL, system=SYSTEM_PROMPT, messages=messages,
-            tools=TOOLS, max_tokens=8000,
+            model=MODEL,
+            system=SYSTEM_PROMPT,
+            messages=messages,
+            tools=TOOLS,
+            max_tokens=8000,
         )
         print(response.content)
         # Append assistant turn
@@ -79,12 +92,13 @@ def agent_loop(messages: list):
                 print(f"\033[33m$ {block.input['command']}\033[0m")
                 output = run_bash(block.input["command"])
                 print(output[:200])
-                results.append({
-                    "type": "tool_result",
-                    "tool_use_id": block.id,
-                    "content": output
-                })
-        messages.append({"role": "user", "content": results}) # Add the tool results to the messages
+                results.append(
+                    {"type": "tool_result", "tool_use_id": block.id, "content": output}
+                )
+        messages.append(
+            {"role": "user", "content": results}
+        )  # Add the tool results to the messages
+
 
 if __name__ == "__main__":
     history = []
