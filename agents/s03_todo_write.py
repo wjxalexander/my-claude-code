@@ -46,11 +46,16 @@ MODEL = os.environ["MODEL_ID"]
 WORKDIR = Path.cwd()
 
 SYSTEM = f"""You are a coding agent at {WORKDIR}.
-Use the todo tool to plan multi-step tasks. Mark in_progress before starting, completed when done.
+ALWAYS call the todo tool FIRST to break down the task before doing anything else.
+Mark in_progress before starting each step, completed when done. Update todos after each step.
 Prefer tools over prose."""
 
 
-# -- TodoManager: structured state the LLM writes to --
+# -- TodoManager: an external "notepad" that the LLM writes to --
+# The LLM itself decides when to call the todo tool (based on the system prompt).
+# TodoManager just stores and validates whatever the LLM sends.
+# This acts as a structured state machine outside the LLM's context,
+# so the model can always see its current progress without guessing.
 class TodoManager:
     def __init__(self):
         self.items = []
@@ -157,8 +162,12 @@ TOOL_HANDLERS = {
     "read_file": lambda **kw: run_read(kw["path"], kw.get("limit")),
     "write_file": lambda **kw: run_write(kw["path"], kw["content"]),
     "edit_file": lambda **kw: run_edit(kw["path"], kw["old_text"], kw["new_text"]),
+    # The LLM decides to call "todo" on its own. Our code just executes
+    # TODO.update() and returns the rendered checklist back to the LLM.
     "todo": lambda **kw: TODO.update(kw["items"]),
 }
+# Tool definitions sent to the API so the LLM knows what tools are available.
+# The LLM reads these schemas and decides which tool to call and with what args.
 TOOLS = [
     {
         "name": "bash",
@@ -227,42 +236,77 @@ TOOLS = [
     },
 ]
 # -- Agent loop with nag reminder injection --
+# The loop sends messages to the LLM and processes its tool calls.
+# Three participants are talking in this loop:
+#   1. The real user    -- only speaks once at the beginning (the task)
+#   2. The LLM (Claude) -- decides which tools to call, including "todo"
+#   3. This code        -- executes tools, returns results as "user" messages,
+#                          and sneaks in <reminder> nudges when needed
 def agent_loop(messages: list):
     rounds_since_todo = 0
     while True:
-        # Nag reminder is injected below, alongside tool results
-        response = client.messages.create(
-            model=MODEL, system=SYSTEM, messages=messages,
-            tools=TOOLS, max_tokens=8000,
-        )
-        messages.append({"role": "assistant", "content": response.content})
-        if not any(block.type == "tool_use" for block in response.content):
-            return
+        # Execute each tool the LLM requested and collect results
         results = []
         used_todo = False
+        # Send conversation history + tool definitions to the LLM.
+        # The LLM sees TOOLS and decides which ones to call (if any).
+        response = client.messages.create(
+            model=MODEL,
+            system=SYSTEM,
+            messages=messages,
+            tools=TOOLS,
+            max_tokens=8000,
+        )
+        # Append the LLM's response as an assistant message
+        messages.append({"role": "assistant", "content": response.content})
+        # If the LLM didn't call any tools, the task is done
+        if not any(block.type == "tool_use" for block in response.content):
+            return
+
         for block in response.content:
             if block.type == "tool_use":
                 handler = TOOL_HANDLERS.get(block.name)
                 try:
-                    output = handler(**block.input) if handler else f"Unknown tool: {block.name}"
+                    output = (
+                        handler(**block.input)
+                        if handler
+                        else f"Unknown tool: {block.name}"
+                    )
                 except Exception as e:
                     output = f"Error: {e}"
-                print(f"> {block.name}: {str(output)[:200]}")
-                results.append({"type": "tool_result", "tool_use_id": block.id, "content": str(output)})
+                print(f"tool output> {block.name}: {str(output)[:200]}")
+                # Every tool_use MUST have a matching tool_result, or the API returns 400
+                results.append({
+                    "type": "tool_result",
+                    "tool_use_id": block.id,
+                    "content": str(output),
+                })
                 if block.name == "todo":
                     used_todo = True
-        rounds_since_todo = 0 if used_todo else rounds_since_todo + 1
-        # A nag reminder injects a nudge if the model goes 3+ rounds without calling todo.
+        # Track how many rounds the LLM has gone without calling todo
+        rounds_since_todo = (
+            0 if used_todo else rounds_since_todo + 1
+        )
+        # Nag reminder: if the LLM hasn't updated todos for 3+ rounds,
+        # sneak a <reminder> into the tool results (disguised as a user message).
+        # The LLM sees this and thinks the user told it to update todos.
         if rounds_since_todo >= 3 and messages:
             last = messages[-1]
-            if last["role"] == "user" and isinstance(last.get("content"), list):
+            if last["role"] == "user" and isinstance(
+                last.get("content"), list
+            ):
                 results.insert(0, {
                     "type": "text",
                     "text": "<reminder>Update your todos.</reminder>",
                 })
+        # Send tool results back as a "user" message.
+        # The real user didn't say this -- our code fabricates it.
+        # The LLM reads these results and decides what to do next.
         messages.append({"role": "user", "content": results})
 
 if __name__ == "__main__":
+    # history is shared across turns -- the LLM sees the full conversation
+    # each time, which is how it "remembers" previous steps.
     history = []
     while True:
         try:
@@ -271,6 +315,8 @@ if __name__ == "__main__":
             break
         if query.strip().lower() in ("q", "exit", ""):
             break
+        # This is the ONLY real user message. Everything else in the
+        # conversation is either the LLM talking or our code faking it.
         history.append({"role": "user", "content": query})
         agent_loop(history)
         response_content = history[-1]["content"]
