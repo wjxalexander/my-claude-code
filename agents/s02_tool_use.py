@@ -18,13 +18,11 @@ Key insight: "The loop didn't change at all. I just added tools."
 
 import os
 from pathlib import Path
-from s01_agent_loop import run_bash
+from s01_agent_loop import run_bash, client
 from dotenv import load_dotenv
 from anthropic import Anthropic
 
 load_dotenv(override=True)
-api_key = os.environ.get("ANTHROPIC_API_KEY")
-client = Anthropic(api_key=api_key)
 MODEL = os.environ["MODEL_ID"]
 WORKDIR = Path.cwd()
 
