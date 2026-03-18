@@ -61,6 +61,8 @@ class TodoManager:
         self.items = []
 
     def update(self, items: list) -> str:
+        # Called when the LLM sends a todo tool_use. Validates + stores items,
+        # then returns render() so the LLM sees its updated checklist.
         if len(items) > 20:
             raise ValueError("Max 20 todos allowed")
         validated = []
@@ -78,10 +80,19 @@ class TodoManager:
             validated.append({"id": item_id, "text": text, "status": status})
         if in_progress_count > 1:
             raise ValueError("Only one task can be in_progress at a time")
+        # Overwrite the old list entirely -- the LLM always sends the full state
         self.items = validated
+        # Return the rendered checklist as the tool_result text.
+        # The LLM reads this to know its current progress.
         return self.render()
 
     def render(self) -> str:
+        # Renders items into a human-readable checklist, e.g.:
+        #   [x] #1: Create directory
+        #   [>] #2: Write utils.py
+        #   [ ] #3: Write tests
+        #   (1/3 completed)
+        # This text goes back to the LLM as tool_result.
         if not self.items:
             return "No todos."
         lines = []
@@ -95,6 +106,8 @@ class TodoManager:
         return "\n".join(lines)
 
 
+# Global singleton -- one notepad shared across the entire agent session.
+# Data flow: LLM calls "todo" -> lambda routes to TODO.update() -> render() -> tool_result back to LLM
 TODO = TodoManager()
 
 
@@ -235,6 +248,8 @@ TOOLS = [
         },
     },
 ]
+
+
 # -- Agent loop with nag reminder injection --
 # The loop sends messages to the LLM and processes its tool calls.
 # Three participants are talking in this loop:
@@ -276,33 +291,35 @@ def agent_loop(messages: list):
                     output = f"Error: {e}"
                 print(f"tool output> {block.name}: {str(output)[:200]}")
                 # Every tool_use MUST have a matching tool_result, or the API returns 400
-                results.append({
-                    "type": "tool_result",
-                    "tool_use_id": block.id,
-                    "content": str(output),
-                })
+                results.append(
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": str(output),
+                    }
+                )
                 if block.name == "todo":
                     used_todo = True
         # Track how many rounds the LLM has gone without calling todo
-        rounds_since_todo = (
-            0 if used_todo else rounds_since_todo + 1
-        )
+        rounds_since_todo = 0 if used_todo else rounds_since_todo + 1
         # Nag reminder: if the LLM hasn't updated todos for 3+ rounds,
         # sneak a <reminder> into the tool results (disguised as a user message).
         # The LLM sees this and thinks the user told it to update todos.
         if rounds_since_todo >= 3 and messages:
             last = messages[-1]
-            if last["role"] == "user" and isinstance(
-                last.get("content"), list
-            ):
-                results.insert(0, {
-                    "type": "text",
-                    "text": "<reminder>Update your todos.</reminder>",
-                })
+            if last["role"] == "user" and isinstance(last.get("content"), list):
+                results.insert(
+                    0,
+                    {
+                        "type": "text",
+                        "text": "<reminder>Update your todos.</reminder>",
+                    },
+                )
         # Send tool results back as a "user" message.
         # The real user didn't say this -- our code fabricates it.
         # The LLM reads these results and decides what to do next.
         messages.append({"role": "user", "content": results})
+
 
 if __name__ == "__main__":
     # history is shared across turns -- the LLM sees the full conversation
