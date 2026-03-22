@@ -29,8 +29,7 @@ import subprocess
 from pathlib import Path
 from s01_agent_loop import run_bash, client
 from dotenv import load_dotenv
-from anthropic import Anthropic
-from s03_todo_write import safe_path, run_bash, run_read, run_write, run_edit
+from s03_todo_write import run_bash, run_read, run_write, run_edit
 
 load_dotenv(override=True)
 MODEL = os.environ["MODEL_ID"]
@@ -190,7 +189,9 @@ def agent_loop(messages: list):
                     # Spawn a subagent -- it gets a fresh messages=[] and works independently.
                     # Only the final summary comes back; the subagent's full conversation is discarded.
                     desc = block.input.get("description", "subtask")
-                    print(f"\033[33m> spawning subagent ({desc}): {block.input['prompt'][:80]}\033[0m")
+                    print(
+                        f"\033[33m> spawning subagent ({desc}): {block.input['prompt'][:80]}\033[0m"
+                    )
                     output = run_subagent(block.input["prompt"])
                     print(f"\033[32m> subagent returned: {str(output)[:200]}\033[0m")
                 else:
