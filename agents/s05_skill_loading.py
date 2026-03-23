@@ -29,6 +29,8 @@ Two-layer skill injection that avoids bloating the system prompt:
     | </skill>                             |
     +--------------------------------------+
 Key insight: "Don't put everything in the system prompt. Load on demand."
+Try these:
+I need to do a code review -- load the relevant skill first
 """
 
 import os
@@ -36,7 +38,6 @@ import re
 import logging
 import subprocess
 from pathlib import Path
-from anthropic import Anthropic
 from dotenv import load_dotenv
 from s01_agent_loop import run_bash, client
 from s04_subagent import CHILD_TOOLS as TOOLS, TOOL_HANDLERS

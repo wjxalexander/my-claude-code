@@ -1,0 +1,13 @@
+{
+  "id": 6,
+  "subject": "emit",
+  "description": "Emit transformed data - can run in parallel with transform after parse is complete",
+  "status": "pending",
+  "blockedBy": [
+    4
+  ],
+  "blocks": [
+    7
+  ],
+  "owner": ""
+}
