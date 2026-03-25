@@ -162,63 +162,73 @@ class TaskManager:
 TASKS = TaskManager(TASKS_DIR)
 SYSTEM = f"You are a coding agent at {WORKDIR}. Use task tools to plan and track work."
 
-TOOLS.extend([
-    {
-        "name": "task_create",
-        "description": "Create a new task.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "subject": {"type": "string"},
-                "description": {"type": "string"},
-            },
-            "required": ["subject"],
-        },
-    },
-    {
-        "name": "task_update",
-        "description": "Update a task's status or dependencies.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "task_id": {"type": "integer"},
-                "status": {
-                    "type": "string",
-                    "enum": ["pending", "in_progress", "completed"],
+TOOLS.extend(
+    [
+        {
+            "name": "task_create",
+            "description": "Create a new task.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "subject": {"type": "string"},
+                    "description": {"type": "string"},
                 },
-                "addBlockedBy": {"type": "array", "items": {"type": "integer"}},
-                "addBlocks": {"type": "array", "items": {"type": "integer"}},
+                "required": ["subject"],
             },
-            "required": ["task_id"],
         },
-    },
-    {
-        "name": "task_list",
-        "description": "List all tasks with status summary.",
-        "input_schema": {"type": "object", "properties": {}},
-    },
-    {
-        "name": "task_get",
-        "description": "Get full details of a task by ID.",
-        "input_schema": {
-            "type": "object",
-            "properties": {"task_id": {"type": "integer"}},
-            "required": ["task_id"],
+        {
+            "name": "task_update",
+            "description": "Update a task's status or dependencies.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "task_id": {"type": "integer"},
+                    "status": {
+                        "type": "string",
+                        "enum": ["pending", "in_progress", "completed"],
+                    },
+                    "addBlockedBy": {"type": "array", "items": {"type": "integer"}},
+                    "addBlocks": {"type": "array", "items": {"type": "integer"}},
+                },
+                "required": ["task_id"],
+            },
         },
-    },
-])
+        {
+            "name": "task_list",
+            "description": "List all tasks with status summary.",
+            "input_schema": {"type": "object", "properties": {}},
+        },
+        {
+            "name": "task_get",
+            "description": "Get full details of a task by ID.",
+            "input_schema": {
+                "type": "object",
+                "properties": {"task_id": {"type": "integer"}},
+                "required": ["task_id"],
+            },
+        },
+    ]
+)
 
 
-TOOL_HANDLERS["task_create"] = lambda **kw: TASKS.create(kw["subject"], kw.get("description", ""))
-TOOL_HANDLERS["task_update"] = lambda **kw: TASKS.update(kw["task_id"], kw.get("status"), kw.get("addBlockedBy"), kw.get("addBlocks"))
+TOOL_HANDLERS["task_create"] = lambda **kw: TASKS.create(
+    kw["subject"], kw.get("description", "")
+)
+TOOL_HANDLERS["task_update"] = lambda **kw: TASKS.update(
+    kw["task_id"], kw.get("status"), kw.get("addBlockedBy"), kw.get("addBlocks")
+)
 TOOL_HANDLERS["task_list"] = lambda **kw: TASKS.list_all()
 TOOL_HANDLERS["task_get"] = lambda **kw: TASKS.get(kw["task_id"])
+
 
 def agent_loop(messages: list):
     while True:
         response = client.messages.create(
-            model=MODEL, system=SYSTEM, messages=messages,
-            tools=TOOLS, max_tokens=8000,
+            model=MODEL,
+            system=SYSTEM,
+            messages=messages,
+            tools=TOOLS,
+            max_tokens=8000,
         )
         messages.append({"role": "assistant", "content": response.content})
         if response.stop_reason != "tool_use":
@@ -228,12 +238,23 @@ def agent_loop(messages: list):
             if block.type == "tool_use":
                 handler = TOOL_HANDLERS.get(block.name)
                 try:
-                    output = handler(**block.input) if handler else f"Unknown tool: {block.name}"
+                    output = (
+                        handler(**block.input)
+                        if handler
+                        else f"Unknown tool: {block.name}"
+                    )
                 except Exception as e:
                     output = f"Error: {e}"
                 print(f"> {block.name}: {str(output)[:200]}")
-                results.append({"type": "tool_result", "tool_use_id": block.id, "content": str(output)})
+                results.append(
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": str(output),
+                    }
+                )
         messages.append({"role": "user", "content": results})
+
 
 if __name__ == "__main__":
     history = []
